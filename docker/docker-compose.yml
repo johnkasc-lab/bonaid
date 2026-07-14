@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bonaid}
+      POSTGRES_USER: ${POSTGRES_USER:-bonaid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonaid_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - bonaid_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bonaid}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - bonaid_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - bonaid_ollama:/root/.ollama
+    # Uncomment to enable GPU acceleration (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      OLLAMA_HOST: http://ollama:11434
+      POSTGRES_DB: ${POSTGRES_DB:-bonaid}
+      POSTGRES_USER: ${POSTGRES_USER:-bonaid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonaid_dev_password}
+    env_file:
+      - ../.env
+    command: ["status"]
+    tty: true
+    stdin_open: true
+
+volumes:
+  bonaid_pgdata:
+  bonaid_redisdata:
+  bonaid_ollama:

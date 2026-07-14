@@ -1,0 +1,2 @@
+[console_scripts]
+bonaid = bonaid.cli:app

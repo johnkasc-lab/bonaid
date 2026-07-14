@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: bonaid
+Version: 0.1.0
+Summary: Open-source multi-agent trading research system - Phase 1 (Foundation)
+Requires-Python: >=3.11
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pydantic-settings
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: psycopg2-binary
+Requires-Dist: redis
+Requires-Dist: typer
+Requires-Dist: rich
+Requires-Dist: python-dotenv
+Requires-Dist: requests
+Requires-Dist: langgraph
+Requires-Dist: langchain-core

@@ -1,0 +1,93 @@
+"""
+bonaid/cli.py
+The terminal application entrypoint - `bonaid <command>`.
+Phase 1 wires up: status, init-db, ping (graph), llm-check.
+Later phases add real logic to: analyze, watch, portfolio, trade, explain,
+news, macro - the command surface is defined now so nothing has to be
+restructured later.
+"""
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from bonaid.config import settings
+from bonaid.db import init_db, get_session
+from bonaid.models import SystemHealth
+from bonaid import cache, llm, graph as graph_mod
+from datetime import datetime
+
+app = typer.Typer(help="Bonaid - open-source multi-agent trading research system")
+console = Console()
+
+
+@app.command()
+def status():
+    """Check health of every subsystem: Postgres, Redis, Ollama, orchestration graph."""
+    table = Table(title=f"{settings.app_name} - System Status")
+    table.add_column("Component")
+    table.add_column("Status")
+    table.add_column("Detail")
+
+    # Postgres
+    try:
+        with get_session() as s:
+            s.execute(__import__("sqlalchemy").text("SELECT 1"))
+        pg_status, pg_detail = "[green]OK[/green]", settings.postgres_url.split("@")[-1]
+    except Exception as e:
+        pg_status, pg_detail = "[red]DOWN[/red]", str(e)[:60]
+    table.add_row("PostgreSQL", pg_status, pg_detail)
+
+    # Redis
+    redis_ok = cache.ping()
+    table.add_row("Redis", "[green]OK[/green]" if redis_ok else "[red]DOWN[/red]", settings.redis_url)
+
+    # Ollama
+    ollama_ok = llm.is_available()
+    models = llm.list_models() if ollama_ok else []
+    table.add_row(
+        "Ollama (local LLM)",
+        "[green]OK[/green]" if ollama_ok else "[yellow]NOT RUNNING[/yellow]",
+        f"models: {', '.join(models) if models else 'none pulled yet'}",
+    )
+
+    # Orchestration graph
+    try:
+        result = graph_mod.run_ping()
+        table.add_row("Orchestration (LangGraph)", "[green]OK[/green]", result)
+    except Exception as e:
+        table.add_row("Orchestration (LangGraph)", "[red]DOWN[/red]", str(e)[:60])
+
+    console.print(table)
+
+
+@app.command("init-db")
+def init_db_cmd():
+    """Create all database tables."""
+    init_db()
+    console.print("[green]Database tables created/verified.[/green]")
+
+
+@app.command("ping")
+def ping(query: str = "healthcheck", ticker: str = None):
+    """Send a test message through the orchestration graph."""
+    console.print(graph_mod.run_ping(query=query, ticker=ticker))
+
+
+@app.command("llm-check")
+def llm_check():
+    """Verify Ollama connectivity and list available local models."""
+    if not llm.is_available():
+        console.print(f"[red]Ollama not reachable at {settings.ollama_host}[/red]")
+        console.print("Start it with: `ollama serve` (or via docker-compose up ollama)")
+        raise typer.Exit(1)
+    models = llm.list_models()
+    console.print(f"[green]Ollama is reachable.[/green] Models available: {models or 'none - run `ollama pull " + settings.ollama_model + "`'}")
+
+
+@app.command()
+def version():
+    console.print(f"{settings.app_name} - Phase 1 (Foundation) - environment={settings.environment}")
+
+
+if __name__ == "__main__":
+    app()
