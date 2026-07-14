@@ -1,6 +1,8 @@
 """
 bonaid/cli.py
 The terminal application entrypoint - `bonaid <command>`.
+Phase 1: status, init-db, ping (graph), llm-check.
+Phase 3 (first agent): analyze - runs the Technical Agent end-to-end.
 """
 import typer
 from rich.console import Console
@@ -8,9 +10,7 @@ from rich.table import Table
 
 from bonaid.config import settings
 from bonaid.db import init_db, get_session
-from bonaid.models import SystemHealth
 from bonaid import cache, llm, graph as graph_mod
-from datetime import datetime
 
 app = typer.Typer(help="Bonaid - open-source multi-agent trading research system")
 console = Console()
@@ -84,8 +84,40 @@ def llm_check():
 
 
 @app.command()
+def analyze(ticker: str, synthetic: bool = typer.Option(False, help="Use synthetic data (offline testing)")):
+    """Run the Technical Agent on a ticker and print a recommendation."""
+    from bonaid.models import AgentDecision
+
+    with console.status(f"Analyzing {ticker}..."):
+        result = graph_mod.run_technical_analysis(ticker, use_synthetic=synthetic)
+
+    action_color = {"BUY": "green", "SELL": "red", "WATCH": "yellow", "HOLD": "white"}.get(result["action"], "white")
+    console.print(f"\nRecommendation: [{action_color}]{result['action']} {result['ticker']}[/{action_color}]")
+    console.print(f"Confidence: {result['confidence']}%")
+    console.print("Reasons:")
+    for r in result["reasons"]:
+        console.print(f"  - {r}")
+    if result.get("llm_summary"):
+        console.print(f"\n[dim]{result['llm_summary']}[/dim]")
+
+    try:
+        with get_session() as s:
+            s.add(AgentDecision(
+                ticker=result["ticker"],
+                action=result["action"],
+                confidence=result["confidence"],
+                reasons=result["reasons"],
+                signal_breakdown=result["signal_breakdown"],
+                llm_summary=result.get("llm_summary"),
+            ))
+        console.print("\n[dim]Logged to decision history.[/dim]")
+    except Exception as e:
+        console.print(f"\n[yellow]Warning: could not log to database ({e})[/yellow]")
+
+
+@app.command()
 def version():
-    console.print(f"{settings.app_name} - Phase 1 (Foundation) - environment={settings.environment}")
+    console.print(f"{settings.app_name} - Phase 1+ (Foundation + Technical Agent) - environment={settings.environment}")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,3 @@
-from bonaid.models.base import ScanLog, SystemHealth  # noqa: F401
+from bonaid.models.base import ScanLog, SystemHealth, AgentDecision  # noqa: F401
 
-__all__ = ["ScanLog", "SystemHealth"]
+__all__ = ["ScanLog", "SystemHealth", "AgentDecision"]

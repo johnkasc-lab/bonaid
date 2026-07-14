@@ -1,4 +1,4 @@
-
+name: bonaid
 
 services:
   postgres:
@@ -37,7 +37,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - F:/ollama-data:/root/.ollama
+      - bonaid_ollama:/root/.ollama
     # Uncomment to enable GPU acceleration (requires nvidia-container-toolkit):
     # deploy:
     #   resources:
@@ -68,6 +68,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonaid_dev_password}
     env_file:
       - ../.env
+    # The image's ENTRYPOINT is ["bonaid"] (see docker/Dockerfile) - without
+    # clearing it here, `command` gets appended AFTER it (e.g. "bonaid tail
+    # -f /dev/null", which isn't a valid subcommand and crash-loops). This
+    # keeps the container alive so you can `docker compose exec app bonaid
+    # <command>` on demand, rather than the container running one command
+    # once and exiting.
     entrypoint: []
     command: ["tail", "-f", "/dev/null"]
     tty: true

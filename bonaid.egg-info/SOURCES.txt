@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 bonaid/cache.py
 bonaid/cli.py
@@ -11,5 +12,15 @@ bonaid.egg-info/dependency_links.txt
 bonaid.egg-info/entry_points.txt
 bonaid.egg-info/requires.txt
 bonaid.egg-info/top_level.txt
+bonaid/agents/__init__.py
+bonaid/agents/technical_agent.py
+bonaid/analysis/__init__.py
+bonaid/analysis/backtester.py
+bonaid/analysis/data_fetcher.py
+bonaid/analysis/indicators.py
+bonaid/analysis/metrics.py
+bonaid/analysis/strategies.py
+bonaid/analysis/synthetic_data.py
 bonaid/models/__init__.py
 bonaid/models/base.py
+tests/test_foundation.py

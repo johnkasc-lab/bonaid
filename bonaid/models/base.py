@@ -26,6 +26,23 @@ class ScanLog(Base):
     notes = Column(Text, nullable=True)
 
 
+class AgentDecision(Base):
+    """One row per `bonaid analyze <ticker>` run. This is the structured
+    record later agents (Risk, Portfolio, Supervisor) and the Memory/Learning
+    phase will query - e.g. 'how did our BUY calls on AAPL perform after 30
+    days?' becomes possible once enough of these accumulate."""
+    __tablename__ = "agent_decisions"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    ticker = Column(String(32), index=True)
+    action = Column(String(16))          # "BUY" | "SELL" | "HOLD" | "WATCH"
+    confidence = Column(Float)           # 0-100
+    reasons = Column(JSON)               # list of strings, the "check/x ..." lines
+    signal_breakdown = Column(JSON)      # per-strategy raw signal + historical Sharpe
+    llm_summary = Column(Text, nullable=True)  # optional natural-language explanation from Ollama
+
+
 class SystemHealth(Base):
     """Heartbeat table - `bonaid status` reads this to show whether each
     subsystem (db, redis, ollama, data feed) is reachable and when it was
