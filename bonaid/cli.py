@@ -1,10 +1,6 @@
 """
 bonaid/cli.py
 The terminal application entrypoint - `bonaid <command>`.
-Phase 1 wires up: status, init-db, ping (graph), llm-check.
-Later phases add real logic to: analyze, watch, portfolio, trade, explain,
-news, macro - the command surface is defined now so nothing has to be
-restructured later.
 """
 import typer
 from rich.console import Console
@@ -28,7 +24,6 @@ def status():
     table.add_column("Status")
     table.add_column("Detail")
 
-    # Postgres
     try:
         with get_session() as s:
             s.execute(__import__("sqlalchemy").text("SELECT 1"))
@@ -37,11 +32,9 @@ def status():
         pg_status, pg_detail = "[red]DOWN[/red]", str(e)[:60]
     table.add_row("PostgreSQL", pg_status, pg_detail)
 
-    # Redis
     redis_ok = cache.ping()
     table.add_row("Redis", "[green]OK[/green]" if redis_ok else "[red]DOWN[/red]", settings.redis_url)
 
-    # Ollama
     ollama_ok = llm.is_available()
     models = llm.list_models() if ollama_ok else []
     table.add_row(
@@ -50,7 +43,6 @@ def status():
         f"models: {', '.join(models) if models else 'none pulled yet'}",
     )
 
-    # Orchestration graph
     try:
         result = graph_mod.run_ping()
         table.add_row("Orchestration (LangGraph)", "[green]OK[/green]", result)
@@ -80,8 +72,15 @@ def llm_check():
         console.print(f"[red]Ollama not reachable at {settings.ollama_host}[/red]")
         console.print("Start it with: `ollama serve` (or via docker-compose up ollama)")
         raise typer.Exit(1)
+
     models = llm.list_models()
-    console.print(f"[green]Ollama is reachable.[/green] Models available: {models or 'none - run `ollama pull " + settings.ollama_model + "`'}")
+    if models:
+        console.print(f"[green]Ollama is reachable.[/green] Models available: {models}")
+    else:
+        console.print(
+            f"[green]Ollama is reachable.[/green] No models pulled yet. "
+            f"Run: ollama pull {settings.ollama_model}"
+        )
 
 
 @app.command()

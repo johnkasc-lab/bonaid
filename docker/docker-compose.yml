@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 services:
   postgres:
@@ -37,7 +37,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - bonaid_ollama:/root/.ollama
+      - F:/ollama-data:/root/.ollama
     # Uncomment to enable GPU acceleration (requires nvidia-container-toolkit):
     # deploy:
     #   resources:
@@ -68,7 +68,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonaid_dev_password}
     env_file:
       - ../.env
-    command: ["status"]
+    entrypoint: []
+    command: ["tail", "-f", "/dev/null"]
     tty: true
     stdin_open: true
 
