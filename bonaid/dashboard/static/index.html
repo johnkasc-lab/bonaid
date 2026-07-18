@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bonaid Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .subtitle { color: var(--dim); font-size: 13px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--dim); margin: 0 0 12px 0; }
+  .stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--dim); font-weight: 500; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  .green { color: var(--green); } .red { color: var(--red); } .yellow { color: var(--yellow); } .dim { color: var(--dim); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .badge.green { background: rgba(63,185,80,0.15); } .badge.red { background: rgba(248,81,73,0.15); } .badge.yellow { background: rgba(210,153,34,0.15); }
+  .warning-item { color: var(--yellow); font-size: 13px; padding: 4px 0; }
+  .empty { color: var(--dim); font-size: 13px; font-style: italic; }
+  .full-width { grid-column: 1 / -1; }
+  #last-updated { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Bonaid Dashboard</h1>
+  <div class="subtitle">Read-only view over your paper-trading system &middot; <span id="last-updated">loading...</span></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Portfolio</h2>
+      <div id="portfolio-stats"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Drawdown</h2>
+      <div id="drawdown-stats"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Realized P&amp;L</h2>
+      <div id="pnl-stats"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Macro Regime</h2>
+      <div id="macro-stats"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Open Positions</h2>
+      <div id="positions-table"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Portfolio Warnings</h2>
+      <div id="warnings-list"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Recent Decisions</h2>
+      <div id="decisions-table"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+
+<script>
+const REFRESH_MS = 30000;
+
+function fmtMoney(n) { return '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function actionColor(a) { return {BUY: 'green', SELL: 'red', WATCH: 'yellow', HOLD: ''}[a] || ''; }
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(url + ' -> ' + res.status);
+  return res.json();
+}
+
+async function loadPortfolio() {
+  const el = document.getElementById('portfolio-stats');
+  const warnEl = document.getElementById('warnings-list');
+  try {
+    const d = await fetchJSON('/api/portfolio');
+    el.innerHTML = `
+      <div class="stat-row"><span>Total Capital</span><span>${fmtMoney(d.total_capital)}</span></div>
+      <div class="stat-row"><span>Deployed</span><span>${fmtMoney(d.deployed_capital)} (${d.deployed_pct}%)</span></div>
+      <div class="stat-row"><span>Open Positions</span><span>${d.position_count}</span></div>
+    `;
+    warnEl.innerHTML = d.warnings.length
+      ? d.warnings.map(w => `<div class="warning-item">&#9888; ${w}</div>`).join('')
+      : '<div class="empty">No warnings.</div>';
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadDrawdown() {
+  const el = document.getElementById('drawdown-stats');
+  try {
+    const d = await fetchJSON('/api/drawdown');
+    const pnlClass = d.total_unrealized_pnl >= 0 ? 'green' : 'red';
+    const statusClass = d.breached ? 'red' : 'green';
+    el.innerHTML = `
+      <div class="stat-row"><span>Unrealized P&amp;L</span><span class="${pnlClass}">${fmtMoney(d.total_unrealized_pnl)}</span></div>
+      <div class="stat-row"><span>Drawdown</span><span class="${pnlClass}">${d.drawdown_pct}%</span></div>
+      <div class="stat-row"><span>Status</span><span class="badge ${statusClass}">${d.breached ? 'BREACHED' : 'OK'}</span></div>
+      ${d.cached ? '<div class="empty">(cached, up to 5min old)</div>' : ''}
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadPnl() {
+  const el = document.getElementById('pnl-stats');
+  try {
+    const d = await fetchJSON('/api/pnl');
+    if (d.trade_count === 0) { el.innerHTML = '<div class="empty">No closed trades yet.</div>'; return; }
+    const pnlClass = d.total_pnl >= 0 ? 'green' : 'red';
+    el.innerHTML = `
+      <div class="stat-row"><span>Trades Closed</span><span>${d.trade_count}</span></div>
+      <div class="stat-row"><span>Total P&amp;L</span><span class="${pnlClass}">${fmtMoney(d.total_pnl)}</span></div>
+      <div class="stat-row"><span>Win Rate</span><span>${d.win_rate}% (${d.wins}W / ${d.losses}L)</span></div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadMacro() {
+  const el = document.getElementById('macro-stats');
+  try {
+    const d = await fetchJSON('/api/macro');
+    if (d.regime === 'No Data') { el.innerHTML = '<div class="empty">FRED not configured.</div>'; return; }
+    const regimeClass = {Tightening: 'red', Easing: 'green', Neutral: 'yellow'}[d.regime] || '';
+    el.innerHTML = `
+      <div class="stat-row"><span>Regime</span><span class="badge ${regimeClass}">${d.regime}</span></div>
+      <div class="stat-row"><span>Fed Funds Rate</span><span>${d.fed_funds_rate}%</span></div>
+      <div class="stat-row"><span>CPI (YoY)</span><span>${d.cpi_yoy_pct ?? '-'}%</span></div>
+      <div class="stat-row"><span>Unemployment</span><span>${d.unemployment_rate ?? '-'}%</span></div>
+      <div class="stat-row"><span>10Y Treasury</span><span>${d.treasury_10y ?? '-'}%</span></div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadPositions() {
+  const el = document.getElementById('positions-table');
+  try {
+    const d = await fetchJSON('/api/positions');
+    if (d.length === 0) { el.innerHTML = '<div class="empty">No open positions.</div>'; return; }
+    el.innerHTML = `<table>
+      <tr><th>Ticker</th><th>Shares</th><th>Entry</th><th>Stop-Loss</th><th>Take-Profit</th><th>Confidence</th><th>Opened</th></tr>
+      ${d.map(p => `<tr>
+        <td>${p.ticker}</td><td>${p.shares}</td><td>${fmtMoney(p.entry_price)}</td>
+        <td>${fmtMoney(p.stop_loss)}</td><td>${fmtMoney(p.take_profit)}</td>
+        <td>${p.entry_confidence ?? 0}%</td>
+        <td class="dim">${p.entry_date ? new Date(p.entry_date).toLocaleString() : '-'}</td>
+      </tr>`).join('')}
+    </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function loadDecisions() {
+  const el = document.getElementById('decisions-table');
+  try {
+    const d = await fetchJSON('/api/decisions?limit=20');
+    if (d.length === 0) { el.innerHTML = '<div class="empty">No decisions logged yet.</div>'; return; }
+    el.innerHTML = `<table>
+      <tr><th>Time</th><th>Ticker</th><th>Action</th><th>Confidence</th><th>Overridden?</th></tr>
+      ${d.map(r => `<tr>
+        <td class="dim">${r.timestamp ? new Date(r.timestamp).toLocaleString() : '-'}</td>
+        <td>${r.ticker}</td>
+        <td class="${actionColor(r.action)}">${r.action}</td>
+        <td>${r.confidence}%</td>
+        <td>${r.overridden ? 'yes' : ''}</td>
+      </tr>`).join('')}
+    </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadPortfolio(), loadDrawdown(), loadPnl(), loadMacro(), loadPositions(), loadDecisions()]);
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+refreshAll();
+setInterval(refreshAll, REFRESH_MS);
+</script>
+</body>
+</html>

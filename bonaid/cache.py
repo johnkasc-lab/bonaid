@@ -23,13 +23,28 @@ def get_redis() -> redis.Redis:
     return _client
 
 
-def cache_set(key: str, value: Any, ttl_seconds: int = 300):
-    get_redis().set(key, json.dumps(value), ex=ttl_seconds)
+def cache_set(key: str, value: Any, ttl_seconds: int = 300) -> bool:
+    """Returns True on success, False if Redis is unreachable - never
+    raises. Caching is a performance optimization; a Redis outage should
+    degrade to 'no caching', not crash whatever called this."""
+    try:
+        get_redis().set(key, json.dumps(value), ex=ttl_seconds)
+        return True
+    except Exception as e:
+        print(f"[cache] set failed (Redis unavailable?): {e}")
+        return False
 
 
 def cache_get(key: str) -> Any:
-    raw = get_redis().get(key)
-    return json.loads(raw) if raw is not None else None
+    """Returns the cached value, or None on a cache miss OR if Redis is
+    unreachable - callers can't distinguish the two, which is correct
+    here: either way, the answer is 'go compute it fresh', never a crash."""
+    try:
+        raw = get_redis().get(key)
+        return json.loads(raw) if raw is not None else None
+    except Exception as e:
+        print(f"[cache] get failed (Redis unavailable?): {e}")
+        return None
 
 
 def publish(channel: str, message: dict):

@@ -19,3 +19,5 @@ Requires-Dist: numpy>=1.24
 Requires-Dist: yfinance>=0.2.40
 Requires-Dist: pyarrow>=14.0
 Requires-Dist: feedparser
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]

@@ -20,6 +20,8 @@ dependencies = [
     "yfinance>=0.2.40",
     "pyarrow>=14.0",
     "feedparser",
+    "fastapi",
+    "uvicorn[standard]",
 ]
 
 [project.scripts]

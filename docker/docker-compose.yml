@@ -85,6 +85,33 @@ services:
     tty: true
     stdin_open: true
 
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      OLLAMA_HOST: http://ollama:11434
+      POSTGRES_DB: ${POSTGRES_DB:-bonaid}
+      POSTGRES_USER: ${POSTGRES_USER:-bonaid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonaid_dev_password}
+    env_file:
+      - ../.env
+    ports:
+      - "8000:8000"
+    # Same entrypoint-clearing note as `app` above applies here - overriding
+    # both entrypoint AND command to run uvicorn directly instead of the
+    # `bonaid` CLI.
+    entrypoint: []
+    command: ["uvicorn", "bonaid.dashboard.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
 volumes:
   bonaid_pgdata:
   bonaid_redisdata:
