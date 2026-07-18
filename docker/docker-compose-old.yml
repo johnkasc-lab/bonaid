@@ -34,12 +34,6 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
-    profiles: ["llm"]  # NOT started by a plain `docker compose up` anymore -
-                        # opt in explicitly with `docker compose --profile llm up -d ollama`
-                        # when you actually want LLM narration/scoring. Every
-                        # agent (Technical, News) already falls back gracefully
-                        # when Ollama isn't reachable, so this is a safe default
-                        # for machines with limited RAM.
     ports:
       - "11434:11434"
     volumes:
@@ -63,8 +57,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      # ollama intentionally NOT listed here - it's optional (see profiles
-      # above). The app already handles "Ollama unreachable" gracefully.
+      ollama:
+        condition: service_started
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis

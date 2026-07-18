@@ -11,7 +11,14 @@ import pandas as pd
 
 def _generate_price_path(n_days: int, seed: int, start_price: float = 100.0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    dates = pd.bdate_range(end=pd.Timestamp.today(), periods=n_days)
+    # .normalize() strips the time component - without it, pandas 3.0's
+    # bdate_range(end=Timestamp.today(), periods=n) can intermittently
+    # return n-1 dates depending on the current time of day (a pandas 3.0
+    # behavior change). That mismatch used to surface as a random
+    # DataFrame-construction ValueError, only on certain days/times -
+    # exactly the kind of bug that's hard to reproduce on demand.
+    dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=n_days)
+    n_days = len(dates)  # use the ACTUAL count from here on, in case it still differs
 
     # Regime-switching drift/vol (bull / bear / choppy) to give strategies
     # something realistic to differentiate on.

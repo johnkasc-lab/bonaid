@@ -41,33 +41,6 @@ class AgentDecision(Base):
     reasons = Column(JSON)               # list of strings, the "check/x ..." lines
     signal_breakdown = Column(JSON)      # per-strategy raw signal + historical Sharpe
     llm_summary = Column(Text, nullable=True)  # optional natural-language explanation from Ollama
-    news_assessment = Column(JSON, nullable=True)  # headline sentiment from the News Agent
-    sentiment_assessment = Column(JSON, nullable=True)  # Reddit social sentiment from the Sentiment Agent
-    supervisor_decision = Column(JSON, nullable=True)  # reconciled final action + reasoning
-    risk_assessment = Column(JSON, nullable=True)  # position size, stop-loss, take-profit from the Risk Agent
-
-
-class PaperPosition(Base):
-    """A simulated (paper) trade position. Opened when the Supervisor
-    decides BUY and Risk Agent sizes it (auto, unless --manual was passed
-    to `bonaid analyze`). Closed automatically by `bonaid check-positions`
-    when the live price crosses the stop-loss or take-profit level set at
-    entry, or manually via `bonaid close`."""
-    __tablename__ = "paper_positions"
-
-    id = Column(Integer, primary_key=True)
-    ticker = Column(String(32), index=True)
-    shares = Column(Integer)
-    entry_price = Column(Float)
-    entry_date = Column(DateTime, default=datetime.utcnow)
-    entry_confidence = Column(Float, nullable=True)  # Supervisor's confidence at the time this was opened
-    stop_loss = Column(Float)
-    take_profit = Column(Float)
-    status = Column(String(16), default="OPEN", index=True)  # "OPEN" | "CLOSED"
-    exit_price = Column(Float, nullable=True)
-    exit_date = Column(DateTime, nullable=True)
-    exit_reason = Column(String(32), nullable=True)  # "stop_loss" | "take_profit" | "manual"
-    realized_pnl = Column(Float, nullable=True)
 
 
 class SystemHealth(Base):

@@ -9,3 +9,8 @@ python-dotenv
 requests
 langgraph
 langchain-core
+pandas>=2.0
+numpy>=1.24
+yfinance>=0.2.40
+pyarrow>=14.0
+feedparser

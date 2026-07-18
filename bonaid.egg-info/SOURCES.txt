@@ -6,6 +6,7 @@ bonaid/config.py
 bonaid/db.py
 bonaid/graph.py
 bonaid/llm.py
+bonaid/universe.py
 bonaid.egg-info/PKG-INFO
 bonaid.egg-info/SOURCES.txt
 bonaid.egg-info/dependency_links.txt
@@ -13,6 +14,12 @@ bonaid.egg-info/entry_points.txt
 bonaid.egg-info/requires.txt
 bonaid.egg-info/top_level.txt
 bonaid/agents/__init__.py
+bonaid/agents/news_agent.py
+bonaid/agents/paper_trading.py
+bonaid/agents/portfolio_agent.py
+bonaid/agents/risk_agent.py
+bonaid/agents/sentiment_agent.py
+bonaid/agents/supervisor.py
 bonaid/agents/technical_agent.py
 bonaid/analysis/__init__.py
 bonaid/analysis/backtester.py
@@ -24,3 +31,11 @@ bonaid/analysis/synthetic_data.py
 bonaid/models/__init__.py
 bonaid/models/base.py
 tests/test_foundation.py
+tests/test_news_agent.py
+tests/test_paper_trading.py
+tests/test_portfolio_agent.py
+tests/test_risk_agent.py
+tests/test_sentiment_agent.py
+tests/test_supervisor.py
+tests/test_technical_agent.py
+tests/test_universe.py
