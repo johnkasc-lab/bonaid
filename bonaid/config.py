@@ -92,5 +92,9 @@ class Settings(BaseSettings):
     reddit_username: str | None = None  # Reddit's API rules want a real account referenced in the
                                           # User-Agent, not a placeholder - improves compliance/reliability
 
+    # --- FRED (macro/economic data, used by the Macro Agent) ---
+    # Free, no-cost API key from https://fred.stlouisfed.org/docs/api/api_key.html
+    fred_api_key: str | None = None
+
 
 settings = Settings()

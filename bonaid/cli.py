@@ -331,6 +331,38 @@ def fix_position_precision():
     console.print(f"Fixed precision on {fixed} position(s)." if fixed else "Nothing to fix - all positions already rounded.")
 
 
+@app.command()
+def macro():
+    """Show the current macro/economic regime (Fed Funds Rate, CPI,
+    unemployment, 10-Year Treasury) via FRED. Market-wide, not
+    ticker-specific - informational only, not yet factored into
+    Supervisor's per-ticker BUY/SELL decisions."""
+    from bonaid.agents.macro_agent import get_macro_snapshot
+
+    with console.status("Fetching macro data from FRED..."):
+        snapshot = get_macro_snapshot()
+
+    regime_color = {"Tightening": "red", "Easing": "green", "Neutral": "yellow", "No Data": "dim"}.get(snapshot.regime, "white")
+    console.print(f"\n[bold]Macro Regime:[/bold] [{regime_color}]{snapshot.regime}[/{regime_color}]")
+    for r in snapshot.reasons:
+        console.print(f"  - {r}")
+
+    if snapshot.regime != "No Data":
+        console.print()
+        table = Table(title="Current Indicators")
+        table.add_column("Indicator")
+        table.add_column("Value", justify="right")
+        table.add_row("Fed Funds Rate", f"{snapshot.fed_funds_rate}%")
+        table.add_row("  3-month change", f"{snapshot.fed_funds_rate_change_3m:+.2f} pts")
+        if snapshot.cpi_yoy_pct is not None:
+            table.add_row("CPI (YoY)", f"{snapshot.cpi_yoy_pct}%")
+        if snapshot.unemployment_rate is not None:
+            table.add_row("Unemployment Rate", f"{snapshot.unemployment_rate}%")
+        if snapshot.treasury_10y is not None:
+            table.add_row("10-Year Treasury", f"{snapshot.treasury_10y}%")
+        console.print(table)
+
+
 @app.command("alert-check")
 def alert_check():
     """Send a test notification to every configured channel (Telegram/

@@ -1,147 +1,108 @@
-# Bonaid — Phase 1: Foundation
+# Bonaid — Master Status Document
+*(Last updated: this session, after Macro Agent)*
 
-Open-source multi-agent trading research system. This is **Phase 1 only**:
-the infrastructure every later phase (agents, reasoning, trading, dashboard)
-plugs into. Nothing here makes trading decisions yet — that's Phase 3+.
+## What Bonaid actually is right now
 
-## What's built and verified working
+A multi-agent trading **research and paper-trading** system. It analyzes
+tickers using technical indicators, news, social sentiment, and macro
+conditions; reconciles disagreement between agents into one decision;
+sizes a position with real risk management; simulates the trade; tracks
+real P&L; and alerts you when things happen. It does NOT place real
+trades - everything is paper/simulated.
 
-### Foundation (Phase 1)
-- ✅ **Project architecture** — `bonaid/` package: config, db, cache, llm, graph, cli
-- ✅ **Configuration system** — `bonaid/config.py`, pydantic-settings, `.env`-driven
-- ✅ **PostgreSQL** — SQLAlchemy 2.x models (`ScanLog`, `SystemHealth`, `AgentDecision`), session management
-- ✅ **Redis** — cache + pub/sub wrapper (`bonaid/cache.py`), ready for agent messaging in Phase 3
-- ✅ **Ollama** — local LLM client (`bonaid/llm.py`), zero API cost, model-swappable
-- ✅ **LangGraph** — real, compiling orchestration graph (`bonaid/graph.py`)
-- ✅ **Terminal CLI** — `bonaid status / init-db / ping / llm-check / analyze / version`
-- ✅ **Docker Compose** — Postgres + Redis + Ollama + app, one command to stand up
-- ✅ **Tests + CI** — 6 passing tests, GitHub Actions runs them on every push
+---
 
-### Technical Agent (first real agent — Phase 3, step 1)
-- ✅ **`bonaid/analysis/`** — the full backtesting engine (11 strategies, indicators,
-  vectorized backtester, metrics) ported in as a first-class package
-- ✅ **`bonaid/agents/technical_agent.py`** — runs all strategies on a ticker,
-  weights each one's "vote" by its own 5-year historical Sharpe on that
-  specific ticker (not a flat majority vote), and produces a
-  BUY/WATCH/HOLD/SELL action with a 0-100% confidence score
-- ✅ **Wired into LangGraph** — `technical` node, `run_technical_analysis()`,
-  ready for News/Sentiment/Macro/Risk/Portfolio nodes to be added alongside it
-- ✅ **`bonaid analyze <ticker>`** — the actual command from the original spec,
-  producing real output:
-  ```
-  $ bonaid analyze AAPL
-  Recommendation: BUY AAPL
-  Confidence: 74.2%
-  Reasons:
-    - 8 of 11 strategies currently signal long
-    - Highest-conviction signal: Dual_Momentum (5yr Sharpe 1.42, currently LONG)
-    - 3 strategies flat - mixed short-term picture
+## ✅ COMPLETED (built, tested, verified on live data)
 
-  Logged to decision history.
-  ```
-- ✅ **Optional LLM narration** — if Ollama is reachable, adds a plain-English
-  paragraph explaining the technical picture (degrades gracefully to the
-  structured output alone if Ollama isn't running)
-- ✅ **Persisted to Postgres** — every `analyze` call writes an `AgentDecision`
-  row, which is what makes the future Memory/Learning phase possible
-  ("how did our BUY calls actually perform?")
+| Component | What it does |
+|---|---|
+| **Foundation** | Docker Compose (Postgres, Redis, Ollama), LangGraph orchestration, `bonaid` CLI |
+| **Technical Agent** | 11 strategies (SMA/EMA crossover, RSI, MACD, Bollinger, Donchian, Momentum, Golden Cross, Dual Momentum, ATR Breakout, Stochastic), confidence-weighted by each strategy's own 5yr Sharpe on that specific ticker |
+| **News Agent** | Google News RSS headlines, LLM or lexicon sentiment scoring |
+| **Sentiment Agent** | StockTwits (primary) + Reddit OAuth (fallback), engagement-weighted, native Bullish/Bearish tags used when present |
+| **Macro Agent** | FRED (Fed Funds Rate, CPI, Unemployment, 10Y Treasury) → Tightening/Easing/Neutral regime classification. **Informational only - not yet wired into Supervisor** |
+| **Supervisor** | Reconciles Technical + News + Sentiment into one final action. Asymmetric rules: either bearish channel downgrades a BUY, but BOTH must agree bullish to upgrade a HOLD |
+| **Risk Agent** | ATR-based stop-loss, fixed reward:risk take-profit, confidence-scaled fixed-fractional position sizing, hard per-position cap |
+| **Paper Trading** | Auto-executes sized BUYs (or `--manual`), tracks real open/closed positions, realized P&L, win rate |
+| **Portfolio Agent** | Real position tracking (not inferred), total exposure %, sector concentration warnings |
+| **Reliability guardrails** | Hard pre-trade exposure cap (refuses a BUY if it would breach total exposure - proven live), sector concentration detection, portfolio-level drawdown alert (total unrealized P&L, not just per-position stops) |
+| **Alert System** | Telegram + email, fires on position open/close/refused/drawdown-breach. **Confirmed working live** |
+| **24/7 Position Monitoring** | Windows Task Scheduler running `bonaid check-positions` on a recurring schedule against your local Docker stack. **Confirmed running live** |
+| **Universe Scan** | `bonaid scan` - runs the full pipeline across ~46 instruments (tech, healthcare, aerospace, crypto, forex, financials, energy, consumer, industrials, broad-market ETFs, India/NSE) in one command, sector-filterable |
 
-## Verified in this session
+**Test coverage: 75/75 passing.**
+
+---
+
+## 🔧 KNOWN GAPS (real, not yet built)
+
+| Gap | Detail |
+|---|---|
+| **No dashboard / web UI** | Everything today is terminal-only (`bonaid <command>` via `docker compose exec`). This is the item you're asking about below. |
+| **Macro Agent not wired into Supervisor** | Regime is computed and displayed, but doesn't yet influence BUY/SELL decisions. Deliberate - macro applies market-wide, not per-ticker, so it needs its own design pass, not a default bolt-on. |
+| **No ML models** | Everything is rule-based (technical indicators, lexicon scoring, FRED thresholds) - no trained/learned models anywhere. |
+| **No live/real broker trading** | Alpaca settings exist in config but are unused - paper trading only, by design, until there's a track record. |
+| **Reddit OAuth intermittently failing** | 403/401 errors persist despite verified account + correct app type. StockTwits (primary source) works fine, so this is low-priority - Reddit is just a fallback. |
+| **No performance analytics beyond basic P&L** | `bonaid pnl` gives realized P&L/win-rate. No equity curve, no rolling Sharpe/drawdown on the actual paper-trading track record over time, no per-agent attribution (which agent's calls are actually good?). |
+| **Single-server architecture** | Postgres lives in a local Docker volume - true "access from anywhere" needs either a cloud database or a hosted dashboard talking to it (see below). |
+| **No automated `bonaid scan` scheduling yet** | Only `check-positions` is scheduled via Task Scheduler so far. |
+
+---
+
+## 📱 On your dashboard/UI request
+
+Worth being precise, because there are two genuinely different asks bundled
+together:
+
+1. **A visual UI instead of terminal commands** - straightforward, buildable now.
+2. **Access from anywhere (not just your PC)** - this is the harder part,
+   and it's an infrastructure question, not just a UI question. Your data
+   lives in a **local** Postgres Docker volume on your Windows machine. A
+   dashboard alone doesn't solve "from anywhere" - if your PC is off,
+   there's nothing to connect to, regardless of the UI.
+
+**Realistic path, in order:**
+
+**Step 1 (buildable now, solves "visual" but not yet "anywhere"):** A local
+web dashboard - I'd build this as a small FastAPI backend + a simple
+frontend (not Figma - Figma is a *design* tool for mockups, not something
+that runs a live app; I'd build the real working dashboard directly)
+reading from your existing Postgres. Runs in Docker alongside your other
+containers, you'd open `http://localhost:8000` in a browser to see
+positions/P&L/decisions live. Genuinely good upgrade from terminal
+commands, on its own.
+
+**Step 2 (solves "anywhere," bigger step):** Move Postgres to a free-tier
+cloud host (Supabase/Neon/Railway all have genuinely free tiers at this
+scale), point `bonaid` at it instead of the local container, and deploy
+the Step 1 dashboard somewhere reachable (a free-tier host like
+Render/Fly.io). Then it's actually reachable from your phone anywhere -
+and the scheduled position-checking would need to move off local Task
+Scheduler onto something always-on too (this is where GitHub Actions
+becomes the right tool again, once the database itself isn't local-only).
+
+I'd build Step 1 next if you want the visual piece now, and treat Step 2
+as a deliberate later decision once the system's calls have proven
+worth relying on from your phone - genuinely think that's the right
+order, not just the easier one.
+
+---
+
+## Full roadmap, updated
+
 ```
-$ pytest tests/ -v
-6 passed in 1.40s
-
-$ bonaid analyze AAPL --synthetic
-Recommendation: SELL AAPL
-Confidence: 16.4%
-Reasons:
-  - 2 of 11 strategies currently signal long
-  - Highest-conviction signal: Dual_Momentum (5yr Sharpe 0.12, currently FLAT)
-  - 9 strategies flat - mixed short-term picture
-```
-(Ran with `--synthetic` since this build sandbox has no internet access to
-Yahoo Finance and no live Postgres/Ollama — the DB write correctly failed
-with a clear connection-refused message instead of crashing, which is the
-desired graceful-degradation behavior. All of this goes green the moment you
-run it inside `docker compose` on a real machine.)
-
-## Fixes included in this version (if you hit these on an earlier copy)
-- Fixed a broken f-string in `cli.py` that crash-looped `llm-check`
-- Fixed `docker-compose.yml`: `app` service now sets `entrypoint: []` so
-  `command` doesn't get appended after the image's `ENTRYPOINT ["bonaid"]`
-  (was causing an infinite restart loop)
-- Pinned `name: bonaid` at the top of `docker-compose.yml` so container names
-  are consistently `bonaid-*` regardless of which folder you run compose from
-
-
-## Run it for real (needs Docker on your machine)
-```bash
-cd bonaid
-cp .env.example .env          # edit if you want non-default passwords
-docker compose -f docker/docker-compose.yml up -d --build
-
-# pull a local model (one-time, ~4-5GB depending on model)
-docker exec -it bonaid-ollama-1 ollama pull deepseek-r1:7b
-
-# check everything is healthy
-docker exec -it bonaid-app-1 bonaid status
-```
-
-Or run natively without Docker (need local Postgres/Redis/Ollama installed):
-```bash
-pip install -r requirements.txt && pip install -e .
-cp .env.example .env
-bonaid init-db
-bonaid status
-```
-
-## Project layout
-```
-bonaid/
-  bonaid/
-    config.py     - settings (env-driven)
-    db.py         - Postgres/SQLAlchemy session management
-    cache.py      - Redis cache + pub/sub
-    llm.py        - Ollama client
-    graph.py      - LangGraph orchestration skeleton
-    cli.py        - `bonaid` terminal command
-    models/       - ORM tables (ScanLog, SystemHealth so far)
-  docker/
-    Dockerfile
-    docker-compose.yml
-  tests/
-    test_foundation.py
-  .github/workflows/ci.yml
-  pyproject.toml, requirements.txt, .env.example
+[DONE]  Foundation, Technical, News, Sentiment, Macro, Supervisor, Risk, Portfolio
+[DONE]  Paper Trading, exposure/sector/drawdown guardrails, Alerts, 24/7 position monitoring
+[DONE]  Universe scan (~46 instruments, sector-filterable)
+[NEXT]  Local web dashboard (FastAPI + simple frontend, Docker-hosted, localhost)
+[GAP]   Wire Macro regime into Supervisor's reconciliation logic
+[GAP]   Performance analytics (equity curve, rolling Sharpe/drawdown, per-agent attribution)
+[LATER] Cloud-hosted Postgres + remotely-accessible dashboard ("from anywhere")
+[LATER] ML models (real gap, biggest lift, most speculative payoff)
+[LATER] Live/real broker trading (only after paper trading has a track record)
 ```
 
-## Design decisions worth knowing
-- **Redis pub/sub**, not Kafka/RabbitMQ — free, zero extra infra, sufficient
-  for agent-to-agent messaging at this scale.
-- **Ollama over any hosted LLM** — zero per-token cost, fully local/private,
-  swap models (`deepseek-r1`, `qwen2.5`, `llama3.1`) via one config value.
-- **LangGraph now, agents later** — the orchestration *shape* (a compiled
-  graph with named nodes and shared state) is locked in now so Phase 3 is
-  "add nodes," not "redesign how agents talk to each other."
-- **SQLAlchemy `create_all`, no Alembic yet** — intentional for Phase 1;
-  Alembic migrations get added in Phase 2 once the schema stabilizes around
-  real data (adding it now would just mean rewriting migrations later).
-
-## What's explicitly NOT built yet
-No news/sentiment/macro/risk/portfolio agents, no trading logic, no
-dashboards, no Grafana/Prometheus, no memory/learning queries against the
-accumulated `AgentDecision` history yet. Same incremental approach — pick the
-next one when ready.
-
-## Next phase options
-1. **News Agent** — same pattern as Technical: fetch (RSS/GDELT, free), score,
-   add a `news` node to the graph, feed into an expanded `analyze` command
-2. **Sentiment Agent** — Reddit/social scoring, same pattern
-3. **Risk Agent** — position sizing, stop-loss/take-profit levels, portfolio
-   exposure limits — this is what turns "BUY, 74% confidence" into an actual
-   tradeable order spec
-4. **Real Supervisor node** — once 2+ agents exist, replace the current
-   pass-through with actual multi-agent consensus logic (weighted voting,
-   conflict resolution when Technical says BUY but Sentiment says SELL)
-5. **Broaden the data layer (Phase 2 proper)** — FRED (macro), more news
-   sources — now that there's a consumer (the agents) to justify each one
+## Immediate next action
+Deploy the Macro Agent files, confirm `bonaid macro` works with a real FRED
+key, then say the word on the local dashboard and it gets built the same
+way as everything else - tested, packaged, verified before delivery.
