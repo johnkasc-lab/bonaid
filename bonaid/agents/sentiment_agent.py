@@ -99,11 +99,13 @@ def _get_oauth_token() -> str | None:
             timeout=10,
         )
         if resp.status_code != 200:
-            print(f"[sentiment_agent] Reddit OAuth token request failed: HTTP {resp.status_code} - {resp.text[:200]!r}")
+            from bonaid.diagnostics import log_error
+            log_error("sentiment_agent", f"Reddit OAuth token request failed: HTTP {resp.status_code} - {resp.text[:200]!r}")
             return None
         return resp.json().get("access_token")
     except Exception as e:
-        print(f"[sentiment_agent] Reddit OAuth token request raised {type(e).__name__}: {e}")
+        from bonaid.diagnostics import log_error
+        log_error("sentiment_agent", f"Reddit OAuth token request raised {type(e).__name__}: {e}")
         return None
 
 
@@ -118,9 +120,12 @@ def fetch_stocktwits_mentions(ticker: str, timeout: int = 10) -> list:
     try:
         resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         if resp.status_code != 200:
-            print(
-                f"[sentiment_agent] StockTwits fetch for '{ticker}' returned "
-                f"HTTP {resp.status_code} (not 200). Response snippet: {resp.text[:200]!r}"
+            from bonaid.diagnostics import log_error
+            log_error(
+                "sentiment_agent",
+                f"StockTwits fetch returned HTTP {resp.status_code} (not 200). "
+                f"Response snippet: {resp.text[:200]!r}",
+                ticker=ticker,
             )
             return []
         data = resp.json()
@@ -137,7 +142,8 @@ def fetch_stocktwits_mentions(ticker: str, timeout: int = 10) -> list:
             })
         return posts
     except Exception as e:
-        print(f"[sentiment_agent] StockTwits fetch for '{ticker}' raised {type(e).__name__}: {e}")
+        from bonaid.diagnostics import log_error
+        log_error("sentiment_agent", f"StockTwits fetch raised {type(e).__name__}: {e}", ticker=ticker)
         return []
 
 
@@ -195,7 +201,8 @@ def fetch_reddit_mentions(ticker: str, limit_per_subreddit: int = 15, timeout: i
                     "sentiment_tag": None,
                 })
         except Exception as e:
-            print(f"[sentiment_agent] r/{subreddit} fetch for '{ticker}' raised {type(e).__name__}: {e}")
+            from bonaid.diagnostics import log_error
+            log_error("sentiment_agent", f"r/{subreddit} fetch raised {type(e).__name__}: {e}", ticker=ticker)
             continue  # one subreddit failing shouldn't kill the whole fetch
     return posts
 

@@ -23,13 +23,19 @@ class Settings(BaseSettings):
     postgres_db: str = "bonaid"
     postgres_user: str = "bonaid"
     postgres_password: str = "bonaid_dev_password"
+    postgres_sslmode: str | None = None  # cloud Postgres (Supabase/Neon/Railway) all REQUIRE this -
+                                           # set to "require" in .env when pointing at a cloud host.
+                                           # Left unset for local Docker Postgres, which doesn't use SSL.
 
     @property
     def postgres_url(self) -> str:
-        return (
+        url = (
             f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+        if self.postgres_sslmode:
+            url += f"?sslmode={self.postgres_sslmode}"
+        return url
 
     # --- Redis ---
     redis_host: str = "localhost"
@@ -95,6 +101,15 @@ class Settings(BaseSettings):
     # --- FRED (macro/economic data, used by the Macro Agent) ---
     # Free, no-cost API key from https://fred.stlouisfed.org/docs/api/api_key.html
     fred_api_key: str | None = None
+
+    # --- Dashboard authentication ---
+    # The dashboard has NO authentication when both are unset - fine for
+    # localhost-only access, but REQUIRED before deploying it anywhere
+    # reachable on the public internet (it's read-only, but still shows
+    # your real positions/P&L to anyone with the URL). Set both to enable
+    # HTTP Basic Auth.
+    dashboard_username: str | None = None
+    dashboard_password: str | None = None
 
 
 settings = Settings()

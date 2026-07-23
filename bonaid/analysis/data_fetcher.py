@@ -62,6 +62,8 @@ def fetch_ohlcv(ticker: str, years: int = 5, interval: str = "1d", retries: int 
                 print(f"[retry] {ticker}: fetch failed ({e}), retrying in {wait}s ({attempt}/{retries})...")
                 time.sleep(wait)
 
+    from bonaid.diagnostics import log_error
+    log_error("data_fetcher", f"Failed to fetch {ticker} after {retries} attempts: {last_error}", ticker=ticker)
     raise RuntimeError(f"Failed to fetch {ticker} after {retries} attempts: {last_error}")
 
 

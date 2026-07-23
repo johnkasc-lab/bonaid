@@ -63,6 +63,11 @@
     </div>
 
     <div class="card full-width">
+      <h2>Track Record</h2>
+      <div id="track-record"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full-width">
       <h2>Open Positions</h2>
       <div id="positions-table"><div class="empty">Loading...</div></div>
     </div>
@@ -159,6 +164,83 @@ async function loadMacro() {
   }
 }
 
+function renderSparkline(points, width = 600, height = 80) {
+  if (points.length < 2) return '<div class="empty">Need at least 2 closed trades to draw a curve.</div>';
+  const values = points.map(p => p.equity);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const stepX = width / (points.length - 1);
+  const coords = values.map((v, i) => {
+    const x = i * stepX;
+    const y = height - ((v - min) / range) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const lineColor = values[values.length - 1] >= values[0] ? '#3fb950' : '#f85149';
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="max-width:100%">
+    <polyline points="${coords}" fill="none" stroke="${lineColor}" stroke-width="2"/>
+  </svg>`;
+}
+
+async function loadTrackRecord() {
+  const el = document.getElementById('track-record');
+  try {
+    const d = await fetchJSON('/api/analytics');
+    if (d.trade_count === 0) { el.innerHTML = '<div class="empty">No closed trades yet.</div>'; return; }
+    const retClass = d.total_return_pct >= 0 ? 'green' : 'red';
+
+    let attributionHtml = '';
+    if (d.attribution) {
+      const ov = d.attribution.by_override;
+      const reliableNote = ov.reliable ? '' : '<div class="empty">(small sample - directional only, not conclusive yet)</div>';
+      let overrideRows = '';
+      if (ov.overridden.trade_count > 0) {
+        overrideRows += `<tr><td>Overridden</td><td>${ov.overridden.trade_count}</td><td>${ov.overridden.win_rate}%</td><td>${fmtMoney(ov.overridden.avg_pnl)}</td></tr>`;
+      }
+      if (ov.not_overridden.trade_count > 0) {
+        overrideRows += `<tr><td>Not overridden</td><td>${ov.not_overridden.trade_count}</td><td>${ov.not_overridden.win_rate}%</td><td>${fmtMoney(ov.not_overridden.avg_pnl)}</td></tr>`;
+      }
+
+      const strategyEntries = Object.entries(d.attribution.by_strategy || {}).sort((a, b) => b[1].avg_pnl - a[1].avg_pnl);
+      const strategyRows = strategyEntries.map(([name, s]) =>
+        `<tr><td>${name}</td><td>${s.trade_count}</td><td>${s.win_rate}%</td><td>${fmtMoney(s.avg_pnl)}</td></tr>`
+      ).join('');
+
+      attributionHtml = `
+        <div style="margin-top:16px">
+          <h2 style="margin-bottom:8px">Attribution: Supervisor Overrides</h2>
+          ${reliableNote}
+          ${overrideRows ? `<table><tr><th></th><th>Trades</th><th>Win Rate</th><th>Avg P&amp;L</th></tr>${overrideRows}</table>` : '<div class="empty">No data.</div>'}
+        </div>
+        <div style="margin-top:16px">
+          <h2 style="margin-bottom:8px">Attribution: Driving Technical Strategy</h2>
+          ${strategyRows ? `<table><tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>Avg P&amp;L</th></tr>${strategyRows}</table>` : '<div class="empty">No data.</div>'}
+        </div>
+      `;
+    } else {
+      attributionHtml = '<div class="empty" style="margin-top:16px">No attribution data - closed trades don\'t have a linked decision (opened before this feature existed).</div>';
+    }
+
+    el.innerHTML = `
+      <div style="margin-bottom:12px">${renderSparkline(d.equity_curve)}</div>
+      <table>
+        <tr><th>Trades</th><th>Total Return</th><th>Max Drawdown</th><th>Win Rate</th><th>Profit Factor</th><th>Sharpe (approx)</th></tr>
+        <tr>
+          <td>${d.trade_count}</td>
+          <td class="${retClass}">${d.total_return_pct}%</td>
+          <td class="red">${d.max_drawdown_pct}%</td>
+          <td>${d.win_rate}%</td>
+          <td>${d.profit_factor ?? '-'}</td>
+          <td>${d.sharpe_approx ?? 'suppressed'}</td>
+        </tr>
+      </table>
+      ${d.notes.map(n => `<div class="empty">${n}</div>`).join('')}
+      ${attributionHtml}
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
 async function loadPositions() {
   const el = document.getElementById('positions-table');
   try {
@@ -199,7 +281,7 @@ async function loadDecisions() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadPortfolio(), loadDrawdown(), loadPnl(), loadMacro(), loadPositions(), loadDecisions()]);
+  await Promise.all([loadPortfolio(), loadDrawdown(), loadPnl(), loadMacro(), loadTrackRecord(), loadPositions(), loadDecisions()]);
   document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 

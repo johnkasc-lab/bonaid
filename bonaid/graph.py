@@ -1,12 +1,18 @@
 """
 bonaid/graph.py
-The orchestration layer. Five real nodes:
-  technical -> news -> sentiment -> supervisor -> risk
+The orchestration layer. Six real nodes:
+  technical -> news -> sentiment -> macro -> supervisor -> risk
 
-Technical, News, and Sentiment each analyze independently. Supervisor
-reconciles their outputs into one final action (see
-bonaid/agents/supervisor.py for the reconciliation rules). Risk sizes a
-position off the SUPERVISOR's action, not Technical's raw action directly.
+Technical, News, and Sentiment each analyze independently, per-ticker.
+Macro is MARKET-WIDE, not ticker-specific - it's fetched once and cached
+(Redis, 1hr TTL, same cache key/pattern as the dashboard's /api/macro) so
+running `bonaid scan` across 46 tickers doesn't hit FRED 46 times for data
+that doesn't change ticker-to-ticker. Supervisor reconciles all four into
+one final action (see bonaid/agents/supervisor.py for the reconciliation
+rules - Macro can downgrade a BUY on its own but never triggers an
+upgrade, since market-wide conditions aren't ticker-specific evidence).
+Risk sizes a position off the SUPERVISOR's action, not Technical's raw
+output directly.
 
 LLM narration (the plain-English paragraphs) is gated behind
 settings.enable_llm_narration, OFF by default - confirmed hallucinating
@@ -15,6 +21,9 @@ testing. The structured decision data never depends on the LLM either way.
 """
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
+
+MACRO_CACHE_KEY = "graph:macro_snapshot"
+MACRO_CACHE_TTL = 3600  # 1 hour - FRED data doesn't change intra-day
 
 
 class BonaidState(TypedDict, total=False):
@@ -25,6 +34,7 @@ class BonaidState(TypedDict, total=False):
     technical_analysis: dict | None
     news_assessment: dict | None
     sentiment_assessment: dict | None
+    macro_snapshot: dict | None
     supervisor_decision: dict | None
     risk_assessment: dict | None
     use_synthetic: bool
@@ -103,8 +113,9 @@ def _news_node(state: BonaidState) -> BonaidState:
 
 
 def _sentiment_node(state: BonaidState) -> BonaidState:
-    """Runs the Sentiment Agent (Reddit-based). Skipped for synthetic runs
-    for the same reason News is - no synthetic social data source."""
+    """Runs the Sentiment Agent (StockTwits primary, Reddit fallback).
+    Skipped for synthetic runs for the same reason News is - no synthetic
+    social data source."""
     if state.get("use_synthetic"):
         state["sentiment_assessment"] = {
             "ticker": state["ticker"], "sentiment_label": "No Data", "sentiment_score": 0.0,
@@ -133,13 +144,46 @@ def _sentiment_node(state: BonaidState) -> BonaidState:
     return state
 
 
+def _macro_node(state: BonaidState) -> BonaidState:
+    """Fetches the current macro regime - MARKET-WIDE, not ticker-specific.
+    Cached in Redis (1hr TTL) so a `bonaid scan` across dozens of tickers
+    hits FRED once, not once per ticker. Skipped for synthetic runs (no
+    reason to hit a real external API in offline test mode)."""
+    if state.get("use_synthetic"):
+        state["macro_snapshot"] = {"regime": "No Data", "reasons": ["Skipped in synthetic mode."]}
+        return state
+
+    from bonaid import cache
+
+    cached = cache.cache_get(MACRO_CACHE_KEY)
+    if cached is not None:
+        state["macro_snapshot"] = cached
+        return state
+
+    from bonaid.agents.macro_agent import get_macro_snapshot
+    snapshot = get_macro_snapshot()
+    result = {
+        "regime": snapshot.regime,
+        "fed_funds_rate": snapshot.fed_funds_rate,
+        "fed_funds_rate_change_3m": snapshot.fed_funds_rate_change_3m,
+        "cpi_yoy_pct": snapshot.cpi_yoy_pct,
+        "reasons": snapshot.reasons,
+    }
+    cache.cache_set(MACRO_CACHE_KEY, result, ttl_seconds=MACRO_CACHE_TTL)
+    state["macro_snapshot"] = result
+    return state
+
+
 def _supervisor_node(state: BonaidState) -> BonaidState:
-    """Reconciles Technical + News + Sentiment into one final action. This
-    is what Risk sizes off - not technical_analysis directly."""
+    """Reconciles Technical + News + Sentiment + Macro into one final
+    action. This is what Risk sizes off - not technical_analysis directly."""
     from bonaid.agents.supervisor import reconcile
 
     ticker = state["ticker"]
-    decision = reconcile(ticker, state["technical_analysis"], state["news_assessment"], state["sentiment_assessment"])
+    decision = reconcile(
+        ticker, state["technical_analysis"], state["news_assessment"],
+        state["sentiment_assessment"], state.get("macro_snapshot"),
+    )
 
     state["supervisor_decision"] = {
         "ticker": decision.ticker,
@@ -150,6 +194,7 @@ def _supervisor_node(state: BonaidState) -> BonaidState:
         "technical_confidence": decision.technical_confidence,
         "news_sentiment": decision.news_sentiment,
         "social_sentiment": decision.social_sentiment,
+        "macro_regime": decision.macro_regime,
         "reasoning": decision.reasoning,
     }
     return state
@@ -198,17 +243,19 @@ def build_graph():
 
 
 def build_analysis_graph():
-    """technical -> news -> sentiment -> supervisor -> risk"""
+    """technical -> news -> sentiment -> macro -> supervisor -> risk"""
     graph = StateGraph(BonaidState)
     graph.add_node("technical", _technical_node)
     graph.add_node("news", _news_node)
     graph.add_node("sentiment", _sentiment_node)
+    graph.add_node("macro", _macro_node)
     graph.add_node("supervisor", _supervisor_node)
     graph.add_node("risk", _risk_node)
     graph.set_entry_point("technical")
     graph.add_edge("technical", "news")
     graph.add_edge("news", "sentiment")
-    graph.add_edge("sentiment", "supervisor")
+    graph.add_edge("sentiment", "macro")
+    graph.add_edge("macro", "supervisor")
     graph.add_edge("supervisor", "risk")
     graph.add_edge("risk", END)
     return graph.compile()
@@ -221,7 +268,7 @@ def run_ping(query: str = "healthcheck", ticker: str | None = None) -> str:
 
 
 def run_technical_analysis(ticker: str, use_synthetic: bool = False, capital: float | None = None) -> dict:
-    """Returns {'technical_analysis', 'news_assessment', 'sentiment_assessment', 'supervisor_decision', 'risk_assessment'}"""
+    """Returns {'technical_analysis', 'news_assessment', 'sentiment_assessment', 'macro_snapshot', 'supervisor_decision', 'risk_assessment'}"""
     app = build_analysis_graph()
     out = app.invoke({
         "ticker": ticker,
@@ -233,6 +280,7 @@ def run_technical_analysis(ticker: str, use_synthetic: bool = False, capital: fl
         "technical_analysis": out["technical_analysis"],
         "news_assessment": out["news_assessment"],
         "sentiment_assessment": out["sentiment_assessment"],
+        "macro_snapshot": out["macro_snapshot"],
         "supervisor_decision": out["supervisor_decision"],
         "risk_assessment": out["risk_assessment"],
     }

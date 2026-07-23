@@ -40,7 +40,7 @@ def compute_pnl(entry_price: float, exit_price: float, shares: int) -> float:
     return round((exit_price - entry_price) * shares, 2)
 
 
-def open_position(ticker: str, shares: int, entry_price: float, stop_loss: float, take_profit: float, entry_confidence: float | None = None):
+def open_position(ticker: str, shares: int, entry_price: float, stop_loss: float, take_profit: float, entry_confidence: float | None = None, source_decision_id: int | None = None):
     """Opens a new paper position, UNLESS:
       1. One is already open for this ticker (prevents silently doubling
          up exposure on repeated BUY signals across multiple calls), OR
@@ -93,6 +93,7 @@ def open_position(ticker: str, shares: int, entry_price: float, stop_loss: float
             shares=shares,
             entry_price=entry_price,
             entry_confidence=entry_confidence,
+            source_decision_id=source_decision_id,
             stop_loss=stop_loss,
             take_profit=take_profit,
             status="OPEN",

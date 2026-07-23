@@ -19,10 +19,18 @@ Redis/data-source hiccup returns a clean JSON error response instead of a
 raw 500 - the dashboard's whole purpose is to show status even when
 something's degraded, so it needs to itself be resilient to the things
 it's reporting on.
+
+AUTH: HTTP Basic Auth, gated entirely by whether DASHBOARD_USERNAME/
+DASHBOARD_PASSWORD are set in .env. Unset (the default) = no auth at all,
+correct for localhost-only access. REQUIRED before deploying this
+anywhere reachable on the public internet - even though it's read-only,
+it shows real positions/P&L to anyone who has the URL without it.
 """
 import functools
+import secrets
 from datetime import datetime, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import os
@@ -36,6 +44,40 @@ app = FastAPI(title="Bonaid Dashboard")
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+security = HTTPBasic(auto_error=False)
+
+
+def require_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    """No-op (auth disabled) unless both DASHBOARD_USERNAME and
+    DASHBOARD_PASSWORD are set - this keeps local development exactly as
+    it's always worked, and only requires a password once you've
+    deliberately configured one (e.g. before deploying publicly).
+    Uses secrets.compare_digest to avoid timing-attack username/password
+    guessing."""
+    if not settings.dashboard_username or not settings.dashboard_password:
+        return  # auth not configured - allow through, same as before this feature existed
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    valid_user = secrets.compare_digest(credentials.username, settings.dashboard_username)
+    valid_pass = secrets.compare_digest(credentials.password, settings.dashboard_password)
+    if not (valid_user and valid_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+# Applied globally so no current or future route can accidentally be left
+# unprotected - one place controls auth for the whole dashboard.
+app.router.dependencies.append(Depends(require_auth))
 
 
 def safe_endpoint(func):
@@ -189,3 +231,61 @@ def api_decisions(limit: int = 20):
             }
             for r in rows
         ]
+
+
+@app.get("/api/analytics")
+@safe_endpoint
+def api_analytics():
+    from bonaid.analytics import compute_track_record_metrics, attribute_by_override, attribute_by_driving_strategy
+
+    with get_session() as s:
+        closed = s.query(PaperPosition).filter(PaperPosition.status == "CLOSED").all()
+        closed_trades = [{"ticker": p.ticker, "exit_date": p.exit_date, "realized_pnl": p.realized_pnl} for p in closed]
+
+        # Join to originating decisions for attribution - same soft-link
+        # pattern as `bonaid track-record` (source_decision_id may be null
+        # for positions opened before this feature existed; those are
+        # simply excluded from attribution, not from the core metrics).
+        decision_ids = [p.source_decision_id for p in closed if p.source_decision_id]
+        decisions_by_id = {}
+        if decision_ids:
+            for d in s.query(AgentDecision).filter(AgentDecision.id.in_(decision_ids)).all():
+                decisions_by_id[d.id] = d
+
+        trades_with_decisions = []
+        for p in closed:
+            d = decisions_by_id.get(p.source_decision_id)
+            if d:
+                trades_with_decisions.append({
+                    "realized_pnl": p.realized_pnl,
+                    "overridden": (d.supervisor_decision or {}).get("overridden", False),
+                    "signal_breakdown": d.signal_breakdown,
+                })
+
+    metrics = compute_track_record_metrics(closed_trades, settings.default_capital)
+
+    attribution = None
+    if trades_with_decisions:
+        attribution = {
+            "by_override": attribute_by_override(trades_with_decisions),
+            "by_strategy": attribute_by_driving_strategy(trades_with_decisions),
+        }
+
+    return {
+        "trade_count": metrics.trade_count,
+        "starting_capital": metrics.starting_capital,
+        "ending_capital": metrics.ending_capital,
+        "total_return_pct": metrics.total_return_pct,
+        "max_drawdown_pct": metrics.max_drawdown_pct,
+        "win_rate": metrics.win_rate,
+        "profit_factor": metrics.profit_factor,
+        "avg_win": metrics.avg_win,
+        "avg_loss": metrics.avg_loss,
+        "sharpe_approx": metrics.sharpe_approx,
+        "notes": metrics.notes,
+        "equity_curve": [
+            {"date": p.date.isoformat(), "equity": p.equity, "ticker": p.ticker, "pnl": p.pnl}
+            for p in metrics.equity_curve
+        ],
+        "attribution": attribution,
+    }

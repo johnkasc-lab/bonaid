@@ -99,6 +99,32 @@ def _run_and_execute(ticker: str, synthetic: bool = False, manual: bool = False,
     decision = combined["supervisor_decision"]
     risk = combined["risk_assessment"]
 
+    # Persist the decision FIRST (before opening any paper trade) so we get
+    # its id back and can link the position to it - this is what makes
+    # per-agent attribution analytics possible later (e.g. "did overridden
+    # decisions perform better or worse than non-overridden ones?").
+    db_error = None
+    decision_id = None
+    try:
+        with get_session() as s:
+            record = AgentDecision(
+                ticker=decision["ticker"],
+                action=decision["action"],
+                confidence=decision["confidence"],
+                reasons=technical["reasons"],
+                signal_breakdown=technical["signal_breakdown"],
+                llm_summary=technical.get("llm_summary"),
+                news_assessment=news,
+                sentiment_assessment=sentiment,
+                supervisor_decision=decision,
+                risk_assessment=risk,
+            )
+            s.add(record)
+            s.flush()
+            decision_id = record.id
+    except Exception as e:
+        db_error = str(e)
+
     paper_trade_message = None
     if risk["tradeable"]:
         if manual:
@@ -112,25 +138,8 @@ def _run_and_execute(ticker: str, synthetic: bool = False, manual: bool = False,
                 stop_loss=risk["stop_loss"],
                 take_profit=risk["take_profit"],
                 entry_confidence=decision["confidence"],
+                source_decision_id=decision_id,
             )
-
-    db_error = None
-    try:
-        with get_session() as s:
-            s.add(AgentDecision(
-                ticker=decision["ticker"],
-                action=decision["action"],
-                confidence=decision["confidence"],
-                reasons=technical["reasons"],
-                signal_breakdown=technical["signal_breakdown"],
-                llm_summary=technical.get("llm_summary"),
-                news_assessment=news,
-                sentiment_assessment=sentiment,
-                supervisor_decision=decision,
-                risk_assessment=risk,
-            ))
-    except Exception as e:
-        db_error = str(e)
 
     combined["paper_trade_message"] = paper_trade_message
     combined["db_error"] = db_error
@@ -152,6 +161,7 @@ def analyze(
     technical = combined["technical_analysis"]
     news = combined["news_assessment"]
     sentiment = combined["sentiment_assessment"]
+    macro = combined.get("macro_snapshot") or {"regime": "No Data", "reasons": []}
     decision = combined["supervisor_decision"]
     risk = combined["risk_assessment"]
 
@@ -187,6 +197,34 @@ def analyze(
         console.print(f"  - {r}")
     if sentiment.get("llm_summary"):
         console.print(f"  [dim]{sentiment['llm_summary']}[/dim]")
+
+    # --- Supporting detail: Macro Agent's market-wide regime ---
+    macro_color = {"Tightening": "red", "Easing": "green", "Neutral": "yellow", "No Data": "dim"}.get(macro["regime"], "white")
+    console.print(f"\n[bold]Macro regime:[/bold] [{macro_color}]{macro['regime']}[/{macro_color}]")
+    for r in macro.get("reasons", []):
+        console.print(f"  - {r}")
+
+    # --- ML Agent: informational win-probability estimate, learned from
+    # the system's own track record. Never gates any decision - purely
+    # additional context, shown only when a trained model actually exists. ---
+    if decision["action"] == "BUY":
+        from bonaid.ml.outcome_model import load_latest_model, predict as ml_predict
+        model = load_latest_model()
+        prediction = ml_predict({
+            "confidence": decision["confidence"],
+            "signal_breakdown": technical["signal_breakdown"],
+            "news_assessment": news,
+            "sentiment_assessment": sentiment,
+            "supervisor_decision": decision,
+        }, model)
+        if prediction.available:
+            prob_color = "green" if prediction.win_probability >= 0.5 else "red"
+            console.print(
+                f"\n[bold]ML win-probability estimate:[/bold] [{prob_color}]{prediction.win_probability * 100:.1f}%[/{prob_color}] "
+                f"[dim](trained on {prediction.model_trade_count} of your own closed trades - informational only)[/dim]"
+            )
+        else:
+            console.print(f"\n[dim]ML estimate: {prediction.reason}[/dim]")
 
     # --- Risk Agent's position sizing, based on the Supervisor's final action ---
     console.print()
@@ -593,6 +631,147 @@ def portfolio(capital: float = typer.Option(None, help="Override total capital (
         console.print("\n[yellow bold]Warnings:[/yellow bold]")
         for w in snap.warnings:
             console.print(f"  [yellow]- {w}[/yellow]")
+
+
+@app.command("track-record")
+def track_record():
+    """Show the paper-trading track record: equity curve, win rate,
+    profit factor, max drawdown, and attribution (did Supervisor overrides
+    help or hurt? which Technical strategy drove the best/worst trades?).
+    Built from CLOSED trades only - see `bonaid positions` for open ones."""
+    from bonaid.models import PaperPosition, AgentDecision
+    from bonaid.analytics import compute_track_record_metrics, attribute_by_override, attribute_by_driving_strategy
+
+    with get_session() as s:
+        closed = s.query(PaperPosition).filter(PaperPosition.status == "CLOSED").all()
+        closed_trades = [{"ticker": p.ticker, "exit_date": p.exit_date, "realized_pnl": p.realized_pnl} for p in closed]
+
+        # Join to originating decisions for attribution - soft link via
+        # source_decision_id, may be null for trades opened before this
+        # feature existed (older positions), which is fine, they're just
+        # excluded from attribution specifically, not from the core metrics.
+        decision_ids = [p.source_decision_id for p in closed if p.source_decision_id]
+        decisions_by_id = {}
+        if decision_ids:
+            for d in s.query(AgentDecision).filter(AgentDecision.id.in_(decision_ids)).all():
+                decisions_by_id[d.id] = d
+
+        trades_with_decisions = []
+        for p in closed:
+            d = decisions_by_id.get(p.source_decision_id)
+            if d:
+                trades_with_decisions.append({
+                    "realized_pnl": p.realized_pnl,
+                    "overridden": (d.supervisor_decision or {}).get("overridden", False),
+                    "signal_breakdown": d.signal_breakdown,
+                })
+
+    metrics = compute_track_record_metrics(closed_trades, settings.default_capital)
+
+    if metrics.trade_count == 0:
+        console.print("[dim]No closed trades yet - track record starts once positions close.[/dim]")
+        return
+
+    console.print(f"\n[bold]Track Record[/bold] ({metrics.trade_count} closed trades)")
+    pnl_color = "green" if metrics.total_return_pct >= 0 else "red"
+    console.print(f"Starting capital: ${metrics.starting_capital:,.2f}")
+    console.print(f"Ending capital:   ${metrics.ending_capital:,.2f}")
+    console.print(f"Total return: [{pnl_color}]{metrics.total_return_pct}%[/{pnl_color}]")
+    console.print(f"Max drawdown: [red]{metrics.max_drawdown_pct}%[/red]")
+    console.print(f"Win rate: {metrics.win_rate}%  |  Avg win: ${metrics.avg_win:,.2f}  |  Avg loss: ${metrics.avg_loss:,.2f}")
+    console.print(f"Profit factor: {metrics.profit_factor if metrics.profit_factor is not None else 'undefined (no losses yet)'}")
+    console.print(f"Sharpe (trade-level, approx): {metrics.sharpe_approx if metrics.sharpe_approx is not None else 'suppressed (not enough trades)'}")
+    for n in metrics.notes:
+        console.print(f"  [dim]- {n}[/dim]")
+
+    if trades_with_decisions:
+        console.print(f"\n[bold]Attribution: Supervisor Overrides[/bold]")
+        override_attr = attribute_by_override(trades_with_decisions)
+        if not override_attr["reliable"]:
+            console.print("  [dim](small sample - directional only, not conclusive yet)[/dim]")
+        for label, key in [("Overridden", "overridden"), ("Not overridden", "not_overridden")]:
+            d = override_attr[key]
+            if d["trade_count"] > 0:
+                console.print(f"  {label}: {d['trade_count']} trades, {d['win_rate']}% win rate, avg P&L ${d['avg_pnl']:,.2f}")
+
+        console.print(f"\n[bold]Attribution: Driving Technical Strategy[/bold]")
+        strategy_attr = attribute_by_driving_strategy(trades_with_decisions)
+        if strategy_attr:
+            table = Table()
+            table.add_column("Strategy")
+            table.add_column("Trades", justify="right")
+            table.add_column("Win Rate", justify="right")
+            table.add_column("Avg P&L", justify="right")
+            for strategy, d in sorted(strategy_attr.items(), key=lambda kv: kv[1]["avg_pnl"], reverse=True):
+                table.add_row(strategy, str(d["trade_count"]), f"{d['win_rate']}%", f"${d['avg_pnl']:,.2f}")
+            console.print(table)
+    else:
+        console.print("\n[dim]No attribution data - closed trades don't have a linked decision (opened before this feature existed).[/dim]")
+
+
+@app.command("ml-train")
+def ml_train():
+    """Trains the self-learning outcome predictor on the system's own
+    closed trades (confidence, technical signal mix, news/sentiment scores
+    -> win or loss). Needs at least 20 closed, attributable trades - will
+    say so plainly and refuse to train on fewer, rather than fit noise."""
+    from bonaid.ml.outcome_model import train_and_store_model, feature_importance, MIN_TRADES_FOR_ML, gather_training_data_from_db
+
+    trades = gather_training_data_from_db()
+    if len(trades) < MIN_TRADES_FOR_ML:
+        console.print(
+            f"[yellow]Not enough data to train yet: {len(trades)} closed, attributable trade(s), "
+            f"need at least {MIN_TRADES_FOR_ML}.[/yellow]"
+        )
+        console.print("[dim]This is expected early on - the model trains on your own track record as trades close.[/dim]")
+        return
+
+    with console.status("Training..."):
+        model = train_and_store_model()
+
+    if model is None:
+        console.print("[yellow]Training refused - all closed trades so far are the same outcome (all wins or all losses).[/yellow]")
+        console.print("[dim]Logistic regression needs both outcomes represented to learn a meaningful boundary.[/dim]")
+        return
+
+    console.print(f"\n[bold green]Model trained[/bold green] on {model.trade_count} closed trades.")
+    console.print(f"Training accuracy: {model.train_accuracy * 100:.1f}%")
+    console.print("[dim](Training accuracy, not out-of-sample - with this few trades, treat as directional, not a guarantee.)[/dim]")
+    console.print("\n[bold]Feature importance:[/bold]")
+    table = Table()
+    table.add_column("Feature")
+    table.add_column("Weight", justify="right")
+    table.add_column("Direction")
+    for name, weight in feature_importance(model):
+        direction = "pushes toward WIN" if weight > 0 else "pushes toward LOSS" if weight < 0 else "no effect"
+        table.add_row(name, f"{weight:+.3f}", direction)
+    console.print(table)
+
+
+@app.command()
+def diagnose(hours: int = typer.Option(24, help="Look back this many hours")):
+    """Summarizes recent failures (SSL/TLS blips, rate limits, unsupported
+    symbols, etc.) captured from data-fetching agents - classifies them and
+    suggests what to do. Diagnoses and explains; does NOT modify any code -
+    real fixes still go through review, same as everything else in this
+    project."""
+    from bonaid.diagnostics import get_recent_errors_from_db
+
+    with console.status("Analyzing recent errors..."):
+        summary = get_recent_errors_from_db(since_hours=hours)
+
+    if summary["total_errors"] == 0:
+        console.print(f"[green]No errors logged in the last {hours} hours.[/green]")
+        return
+
+    console.print(f"\n[bold]{summary['total_errors']} error(s) in the last {hours} hours[/bold]\n")
+    for category, data in summary["categories"].items():
+        color = "dim" if category in ("Symbol not supported (404)", "Not configured") else "yellow"
+        console.print(f"[bold {color}]{category}[/bold {color}] - {data['count']} occurrence(s), from: {', '.join(data['components'])}")
+        console.print(f"  [dim]{data['remediation']}[/dim]")
+        for ex in data["examples"]:
+            console.print(f"  [dim]e.g. \"{ex}\"[/dim]")
+        console.print()
 
 
 @app.command()

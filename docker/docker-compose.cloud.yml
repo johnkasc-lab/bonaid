@@ -1,0 +1,43 @@
+name: bonaid-cloud
+
+# Cloud-mode stack: app + dashboard only. NO local postgres/redis services -
+# both point at cloud-hosted equivalents configured entirely via .env
+# (POSTGRES_HOST/PORT/USER/PASSWORD/DB/SSLMODE for your Supabase/Neon/
+# Railway Postgres instance). Ollama is intentionally excluded too - if you
+# want LLM narration in cloud mode, run it locally alongside this via the
+# original docker/docker-compose.yml's `--profile llm` and point
+# OLLAMA_HOST at your local machine's reachable address, or skip narration
+# entirely (everything works without it - narration has been OFF by
+# default all along).
+#
+# This file is SEPARATE from docker/docker-compose.yml on purpose - your
+# existing local-only setup keeps working completely unchanged; this is an
+# additional, opt-in way to run the same code pointed at cloud infra.
+#
+# Usage:
+#   docker compose -f docker-compose.cloud.yml up -d --build
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env.cloud
+    entrypoint: []
+    command: ["tail", "-f", "/dev/null"]
+    tty: true
+    stdin_open: true
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env.cloud
+    ports:
+      - "8000:8000"
+    entrypoint: []
+    command: ["uvicorn", "bonaid.dashboard.main:app", "--host", "0.0.0.0", "--port", "8000"]

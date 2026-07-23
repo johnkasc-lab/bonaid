@@ -70,7 +70,8 @@ def _fetch_series(series_id: str, limit: int = 15, timeout: int = 10) -> list[di
             timeout=timeout,
         )
         if resp.status_code != 200:
-            print(f"[macro_agent] FRED fetch for '{series_id}' returned HTTP {resp.status_code}: {resp.text[:200]!r}")
+            from bonaid.diagnostics import log_error
+            log_error("macro_agent", f"FRED fetch for '{series_id}' returned HTTP {resp.status_code}: {resp.text[:200]!r}")
             return []
         data = resp.json()
         observations = [
@@ -80,7 +81,8 @@ def _fetch_series(series_id: str, limit: int = 15, timeout: int = 10) -> list[di
         ]
         return list(reversed(observations))  # oldest-first, easier to reason about trend
     except Exception as e:
-        print(f"[macro_agent] FRED fetch for '{series_id}' raised {type(e).__name__}: {e}")
+        from bonaid.diagnostics import log_error
+        log_error("macro_agent", f"FRED fetch for '{series_id}' raised {type(e).__name__}: {e}")
         return []
 
 

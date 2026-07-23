@@ -61,6 +61,7 @@ class PaperPosition(Base):
     entry_price = Column(Float)
     entry_date = Column(DateTime, default=datetime.utcnow)
     entry_confidence = Column(Float, nullable=True)  # Supervisor's confidence at the time this was opened
+    source_decision_id = Column(Integer, nullable=True, index=True)  # links back to the AgentDecision that opened this - not a hard FK (positions/decisions can outlive each other independently), just a soft reference for attribution analytics
     stop_loss = Column(Float)
     take_profit = Column(Float)
     status = Column(String(16), default="OPEN", index=True)  # "OPEN" | "CLOSED"
@@ -68,6 +69,41 @@ class PaperPosition(Base):
     exit_date = Column(DateTime, nullable=True)
     exit_reason = Column(String(32), nullable=True)  # "stop_loss" | "take_profit" | "manual"
     realized_pnl = Column(Float, nullable=True)
+
+
+class MLModel(Base):
+    """A trained version of the self-learning outcome predictor. Weights
+    are stored as plain JSON (a list of floats + a bias), not a pickled/
+    binary blob - deliberately auditable, a human can read the actual
+    learned coefficients directly from the database. Only the most recent
+    row is used for predictions (bonaid.ml.outcome_model.load_latest_model),
+    older rows are kept as a version history."""
+    __tablename__ = "ml_models"
+
+    id = Column(Integer, primary_key=True)
+    trained_at = Column(DateTime, default=datetime.utcnow, index=True)
+    feature_names = Column(JSON)
+    weights = Column(JSON)
+    bias = Column(Float)
+    train_accuracy = Column(Float)
+    trade_count = Column(Integer)
+    notes = Column(Text, nullable=True)
+
+
+class ErrorLog(Base):
+    """Captured failures from data-fetching agents (StockTwits/Reddit/
+    yfinance/FRED timeouts, rate limits, unsupported symbols, etc.) -
+    previously these only ever went to stdout (the [agent_name] print
+    lines you've seen throughout `bonaid analyze`/`scan` output). Storing
+    them lets `bonaid diagnose` aggregate and classify what's actually
+    been failing, rather than scrolling back through terminal history."""
+    __tablename__ = "error_log"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    component = Column(String(64), index=True)   # e.g. "sentiment_agent", "data_fetcher", "macro_agent"
+    ticker = Column(String(32), nullable=True)
+    message = Column(Text)
 
 
 class SystemHealth(Base):
